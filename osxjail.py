@@ -22,6 +22,7 @@ def main():
   sp = ap.add_subparsers()
 
   cp = sp.add_parser('run')
+  cp.add_argument('--user')
   cp.add_argument('--manifest', default=default_manifest)
   cp.add_argument('--hardlink', action='store_true')
   cp.add_argument('jaildir')
@@ -62,28 +63,37 @@ def cmd_run(args):
   # simmutable to keep chroot cheap and safe.
   for fname in file_manifest:
     dst = os.path.join(jaildir, fname.lstrip('/'))
+    if os.path.islink(fname):
+      linkto = os.readlink(fname)
+      if os.path.exists(dst):
+        os.remove(dst)
+      os.symlink(linkto, dst)
+      continue
     try:
       fstat = os.stat(fname)
     except OSError as e:
       print 'missing entry', fname
       continue
     if stat.S_ISCHR(fstat.st_mode):
-      major, minor = os.major(fstat.st_dev), os.minor(fstat.st_dev)
+      major, minor = os.major(fstat.st_rdev), os.minor(fstat.st_rdev)
       dev = os.makedev(major, minor)
       print 'mknod', dst, major, minor, dev
       if os.path.exists(dst):
         os.remove(dst)
-      os.mknod(dst, 0600|stat.S_IFCHR, dev)
+      os.mknod(dst, fstat.st_mode, dev)
     elif stat.S_ISDIR(fstat.st_mode):
       print 'bad entry', fname
       pass # already created
     else:
-      shutil.copy(fname, dst)
+      shutil.copy2(fname, dst)
   print 'entering jail', jaildir, '...'
-  chroot_cmd = ['chroot', '-u', os.environ['SUDO_USER'], jaildir]
+  chroot_cmd = ['chroot']
+  if args.user:
+    chroot_cmd += ['-u', args.user]
+  chroot_cmd += [jaildir]
   if args.chroot_args:
     chroot_cmd += args.chroot_args
-  os.execv('/usr/sbin/chroot', chroot_cmd)
+  os.execve('/usr/sbin/chroot', chroot_cmd, {})
 
 def cmd_freeze(args):
   deps = find_deps(args.files)
